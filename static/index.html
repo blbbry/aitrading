@@ -332,7 +332,7 @@
 <div id="toast"></div>
 
 <script>
-const API = 'http://localhost:8000';
+const API = window.location.origin;
 const $ = id => document.getElementById(id);
 
 const fmt$ = n => n == null ? '—' : '$' + Number(n).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
