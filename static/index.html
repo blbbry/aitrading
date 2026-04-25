@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Swing Trading Dashboard</title>
+  <style>
+    :root {
+      --bg: #0d1117; --bg2: #161b22; --bg3: #21262d;
+      --border: #30363d; --text: #e6edf3; --muted: #8b949e;
+      --green: #3fb950; --green-dim: #1a4731; --green-bg: #0d3b1e;
+      --red: #f85149; --red-dim: #4a1a1a;
+      --yellow: #d29922; --blue: #58a6ff; --purple: #bc8cff;
+      --accent: #238636; --orange: #f0883e;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 14px; }
+
+    /* Header */
+    header {
+      background: var(--bg2); border-bottom: 1px solid var(--border);
+      padding: 12px 24px; display: flex; align-items: center;
+      justify-content: space-between; position: sticky; top: 0; z-index: 100;
+    }
+    .logo { display: flex; align-items: center; gap: 10px; font-size: 17px; font-weight: 700; }
+    .header-right { display: flex; align-items: center; gap: 12px; }
+    .status-pill { display: flex; align-items: center; gap: 6px; background: var(--bg3); border: 1px solid var(--border); border-radius: 20px; padding: 5px 12px; font-size: 12px; color: var(--muted); }
+    .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); animation: pulse 2s infinite; }
+    .dot.red { background: var(--red); animation: none; }
+    .dot.yellow { background: var(--yellow); }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+    .last-update { font-size: 11px; color: var(--muted); }
+
+    /* Auto-pilot toggle */
+    .autopilot-bar {
+      background: linear-gradient(135deg, #0d1f12, #0d1117);
+      border-bottom: 1px solid var(--border);
+      padding: 10px 24px;
+      display: flex; align-items: center; gap: 16px;
+    }
+    .ap-toggle-wrap { display: flex; align-items: center; gap: 10px; }
+    .ap-label { font-size: 13px; font-weight: 600; }
+    .toggle { position: relative; width: 46px; height: 24px; cursor: pointer; }
+    .toggle input { opacity: 0; width: 0; height: 0; }
+    .toggle-track {
+      position: absolute; inset: 0; border-radius: 24px;
+      background: var(--bg3); border: 1px solid var(--border);
+      transition: background .3s, border-color .3s;
+    }
+    .toggle input:checked + .toggle-track { background: var(--accent); border-color: var(--green); }
+    .toggle-thumb {
+      position: absolute; top: 3px; left: 3px;
+      width: 16px; height: 16px; border-radius: 50%;
+      background: var(--muted); transition: transform .3s, background .3s;
+    }
+    .toggle input:checked ~ .toggle-thumb { transform: translateX(22px); background: #fff; }
+    .ap-stats { display: flex; gap: 20px; font-size: 12px; color: var(--muted); margin-left: 8px; }
+    .ap-stat span { color: var(--text); font-weight: 600; }
+    .ap-status { font-size: 12px; padding: 3px 10px; border-radius: 12px; font-weight: 600; }
+    .ap-on  { background: var(--green-dim); color: var(--green); }
+    .ap-off { background: var(--bg3); color: var(--muted); }
+    .market-badge { font-size: 11px; padding: 3px 9px; border-radius: 10px; font-weight: 600; }
+    .market-open   { background: var(--green-bg); color: var(--green); }
+    .market-closed { background: #2a1f10; color: var(--orange); }
+    .ap-actions { display: flex; gap: 8px; margin-left: auto; }
+
+    /* Layout */
+    main { padding: 18px 24px; max-width: 1400px; margin: 0 auto; }
+    .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 18px; }
+    .stat-card { background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; padding: 15px 18px; }
+    .stat-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 6px; }
+    .stat-value { font-size: 22px; font-weight: 700; letter-spacing: -.5px; }
+    .stat-sub { font-size: 11px; color: var(--muted); margin-top: 3px; }
+    .green { color: var(--green); } .red { color: var(--red); }
+    .blue { color: var(--blue); }  .yellow { color: var(--yellow); }
+    .orange { color: var(--orange); }
+
+    .grid-wide { display: grid; grid-template-columns: 3fr 2fr; gap: 16px; margin-bottom: 16px; }
+    .grid-2    { display: grid; grid-template-columns: 1fr 1fr;  gap: 16px; margin-bottom: 16px; }
+
+    /* Panels */
+    .panel { background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+    .panel-header { display: flex; align-items: center; justify-content: space-between; padding: 12px 18px; border-bottom: 1px solid var(--border); }
+    .panel-title { font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 7px; }
+
+    /* Buttons */
+    .btn { border: none; border-radius: 6px; padding: 6px 14px; font-size: 12px; font-weight: 600; cursor: pointer; transition: opacity .15s, transform .1s; display: inline-flex; align-items: center; gap: 5px; }
+    .btn:hover { opacity: .85; } .btn:active { transform: scale(.97); } .btn:disabled { opacity: .4; cursor: not-allowed; }
+    .btn-green  { background: var(--accent); color: #fff; }
+    .btn-blue   { background: #1f4f8a; color: var(--blue); }
+    .btn-ghost  { background: var(--bg3); color: var(--text); border: 1px solid var(--border); }
+    .btn-red    { background: var(--red-dim); color: var(--red); }
+    .btn-orange { background: #2d1f08; color: var(--orange); }
+    .btn-row { display: flex; gap: 8px; flex-wrap: wrap; padding: 12px 18px; border-top: 1px solid var(--border); }
+
+    /* Tables */
+    table { width: 100%; border-collapse: collapse; }
+    th { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; padding: 9px 16px; text-align: left; border-bottom: 1px solid var(--border); font-weight: 500; }
+    td { padding: 10px 16px; border-bottom: 1px solid var(--border); font-size: 13px; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: rgba(255,255,255,.02); }
+    .mono { font-family: 'SF Mono', Menlo, monospace; }
+    .symbol-badge { background: var(--bg3); border: 1px solid var(--border); border-radius: 5px; padding: 2px 7px; font-weight: 700; font-size: 12px; font-family: monospace; cursor: pointer; }
+    .symbol-badge:hover { border-color: var(--blue); color: var(--blue); }
+
+    /* Stop / Target mini-bars */
+    .price-range { display: flex; flex-direction: column; gap: 2px; }
+    .stop-tag   { font-size: 10px; color: var(--red); font-family: monospace; }
+    .target-tag { font-size: 10px; color: var(--green); font-family: monospace; }
+
+    /* Score bar */
+    .score-wrap { display: flex; align-items: center; gap: 8px; }
+    .score-bar-bg { flex: 1; height: 5px; background: var(--bg3); border-radius: 3px; overflow: hidden; max-width: 60px; }
+    .score-bar-fill { height: 100%; border-radius: 3px; background: linear-gradient(90deg, var(--red), var(--yellow), var(--green)); }
+    .score-num { font-size: 12px; font-weight: 700; min-width: 26px; }
+
+    /* Action badges */
+    .action-badge { display: inline-block; font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 4px; letter-spacing: .3px; }
+    .badge-buy    { background: var(--green-dim); color: var(--green); }
+    .badge-strong { background: var(--green-bg); color: #4ade80; }
+    .badge-sell   { background: var(--red-dim); color: var(--red); }
+    .badge-hold   { background: #2d2a1f; color: var(--yellow); }
+    .badge-watch  { background: #1a2a3d; color: var(--blue); }
+    .badge-neutral{ background: var(--bg3); color: var(--muted); }
+    .badge-auto   { background: #1a2040; color: var(--purple); }
+
+    /* P&L pill */
+    .pnl-positive { color: var(--green); font-weight: 600; }
+    .pnl-negative { color: var(--red); font-weight: 600; }
+
+    /* Input bar */
+    .input-bar { display: flex; gap: 8px; padding: 12px 18px; border-bottom: 1px solid var(--border); }
+    .input-bar input { flex: 1; background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; padding: 7px 12px; color: var(--text); font-size: 13px; font-family: monospace; text-transform: uppercase; outline: none; }
+    .input-bar input:focus { border-color: var(--blue); }
+    .input-bar input::placeholder { color: var(--muted); text-transform: none; }
+
+    /* Log feed */
+    .log-feed { font-family: 'SF Mono', Menlo, monospace; font-size: 11px; padding: 10px 16px; max-height: 260px; overflow-y: auto; color: var(--muted); }
+    .log-entry { padding: 3px 0; border-bottom: 1px solid rgba(48,54,61,.4); display: flex; gap: 8px; }
+    .log-entry:last-child { border-bottom: none; }
+    .log-ts { color: #3d4550; flex-shrink: 0; }
+    .log-auto    { color: var(--green); }
+    .log-warning { color: var(--yellow); }
+    .log-error   { color: var(--red); }
+    .log-webhook { color: var(--blue); }
+    .log-msg { word-break: break-word; }
+
+    /* Empty / spinner */
+    .empty { text-align: center; color: var(--muted); padding: 28px; font-size: 13px; }
+    .empty-icon { font-size: 26px; margin-bottom: 6px; }
+    .spinner { display: inline-block; width: 13px; height: 13px; border: 2px solid var(--border); border-top-color: var(--blue); border-radius: 50%; animation: spin .7s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Toast */
+    #toast { position: fixed; bottom: 24px; right: 24px; background: var(--bg3); border: 1px solid var(--border); border-radius: 8px; padding: 12px 18px; font-size: 13px; opacity: 0; transition: opacity .3s; pointer-events: none; max-width: 320px; z-index: 999; }
+    #toast.show { opacity: 1; }
+
+    .scrollable { max-height: 280px; overflow-y: auto; }
+    @media (max-width: 900px) { .stats-grid { grid-template-columns: 1fr 1fr; } .grid-wide, .grid-2 { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+
+<!-- Header -->
+<header>
+  <div class="logo">📈 AI Swing Trader</div>
+  <div class="header-right">
+    <span class="last-update" id="lastUpdate">Connecting...</span>
+    <div class="status-pill"><div class="dot" id="statusDot"></div> Paper Trading</div>
+  </div>
+</header>
+
+<!-- Auto-pilot control bar -->
+<div class="autopilot-bar">
+  <div class="ap-toggle-wrap">
+    <span class="ap-label">🤖 Auto-Pilot</span>
+    <label class="toggle">
+      <input type="checkbox" id="apToggle" onchange="toggleAutopilot(this.checked)" />
+      <div class="toggle-track"></div>
+      <div class="toggle-thumb"></div>
+    </label>
+    <span class="ap-status ap-off" id="apStatus">OFF</span>
+  </div>
+  <span class="market-badge market-closed" id="marketBadge">⏸ Market Closed</span>
+  <div class="ap-stats">
+    <div>Trades today: <span id="apTrades">0</span></div>
+    <div>Last scan: <span id="apLastScan">—</span></div>
+    <div>Last check: <span id="apLastCheck">—</span></div>
+  </div>
+  <div class="ap-actions">
+    <button class="btn btn-orange" onclick="forceScan()"  title="Scan watchlist now">⚡ Scan Now</button>
+    <button class="btn btn-ghost"  onclick="forceCheck()" title="Check positions now">🔍 Check Positions</button>
+    <button class="btn" id="forceModeBtn" onclick="toggleForceMode()"
+      style="background:#2a1a3a;color:#bc8cff;border:1px solid #4a2a6a;"
+      title="Bypass market hours — for testing only">🧪 Test Mode: OFF</button>
+  </div>
+</div>
+
+<main>
+
+  <!-- Stats row -->
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="stat-label">Total Equity</div>
+      <div class="stat-value blue" id="totalEquity">—</div>
+      <div class="stat-sub">Cash + Positions</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Available Cash</div>
+      <div class="stat-value" id="cash">—</div>
+      <div class="stat-sub" id="cashPct">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Market Value</div>
+      <div class="stat-value" id="marketValue">—</div>
+      <div class="stat-sub" id="posCount">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Unrealized P&amp;L</div>
+      <div class="stat-value" id="unrealizedPnl">—</div>
+      <div class="stat-sub" id="pnlSub">—</div>
+    </div>
+  </div>
+
+  <!-- Row 1: Positions + Analyze -->
+  <div class="grid-wide">
+
+    <!-- Open Positions -->
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title">📂 Open Positions</div>
+        <button class="btn btn-ghost" onclick="refreshPortfolio()">↻ Refresh</button>
+      </div>
+      <div class="scrollable">
+        <table>
+          <thead><tr>
+            <th>Symbol</th><th>Shares</th><th>Avg Cost</th>
+            <th>Price</th><th>P&amp;L</th><th>Stop / Target</th><th>Score</th>
+          </tr></thead>
+          <tbody id="positionsBody">
+            <tr><td colspan="7"><div class="empty"><div class="empty-icon">📭</div>No open positions</div></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-ghost" onclick="forceCheck()">🔍 Check Exits Now</button>
+        <span style="font-size:11px;color:var(--muted);margin-left:4px;">Auto-checked every 5 min when enabled</span>
+      </div>
+    </div>
+
+    <!-- Analyze -->
+    <div class="panel">
+      <div class="panel-header"><div class="panel-title">🤖 Manual Analyze</div></div>
+      <div class="input-bar">
+        <input type="text" id="analyzeInput" placeholder="Enter ticker e.g. NVDA" maxlength="6" />
+        <button class="btn btn-green" id="analyzeBtn" onclick="analyzeStock()">▶ Run</button>
+      </div>
+      <div id="analyzeResult" style="padding:14px 18px;font-size:12px;color:var(--muted);min-height:90px;line-height:1.6;">
+        Enter a ticker — the full bot team analyzes it and executes if conditions are met.
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-blue"  onclick="triggerScreen()">🔭 Screen Watchlist</button>
+        <button class="btn btn-orange" onclick="forceScan()">⚡ Auto-Scan Now</button>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Row 2: Screener + Auto-pilot log -->
+  <div class="grid-2">
+
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title">🔭 Top Swing Setups</div>
+        <button class="btn btn-blue" onclick="triggerScreen()" id="screenBtn">Scan Now</button>
+      </div>
+      <div class="scrollable">
+        <table>
+          <thead><tr><th>Symbol</th><th>Score</th><th>Signal</th><th>Price</th><th>RSI</th><th>Target</th><th>Upside</th></tr></thead>
+          <tbody id="screenerBody">
+            <tr><td colspan="7"><div class="empty"><div class="empty-icon">🔭</div>Click "Scan Now" to find setups</div></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title">⚡ Activity Log</div>
+        <button class="btn btn-ghost" onclick="refreshLogs()">↻</button>
+      </div>
+      <div class="log-feed" id="logFeed">
+        <div class="empty" style="padding:16px;">Waiting for activity...</div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Row 3: History + Watchlist -->
+  <div class="grid-2">
+
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title">📜 Trade History</div>
+        <button class="btn btn-ghost" onclick="refreshHistory()">↻ Refresh</button>
+      </div>
+      <div class="scrollable">
+        <table>
+          <thead><tr><th>Time</th><th>Symbol</th><th>Action</th><th>Shares</th><th>Price</th><th>Reason</th></tr></thead>
+          <tbody id="historyBody">
+            <tr><td colspan="6"><div class="empty"><div class="empty-icon">📜</div>No trades yet</div></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header"><div class="panel-title">📋 Watchlist</div></div>
+      <div class="input-bar">
+        <input type="text" id="watchlistInput" placeholder="Add ticker e.g. COIN" maxlength="6" />
+        <button class="btn btn-green" onclick="addToWatchlist()">+ Add</button>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;padding:14px 18px;max-height:200px;overflow-y:auto;" id="watchlistGrid">
+        <div class="empty">Loading...</div>
+      </div>
+    </div>
+
+  </div>
+
+</main>
+
+<div id="toast"></div>
+
+<script>
+const API = 'http://localhost:8000';
+const $ = id => document.getElementById(id);
+
+const fmt$ = n => n == null ? '—' : '$' + Number(n).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
+const fmtPct = n => n == null ? '—' : (n >= 0 ? '+' : '') + Number(n).toFixed(1) + '%';
+const timeSince = ts => { if(!ts) return '—'; const s = Math.floor((Date.now() - new Date(ts+'Z').getTime())/1000); return s < 60 ? `${s}s ago` : s < 3600 ? `${Math.floor(s/60)}m ago` : `${Math.floor(s/3600)}h ago`; };
+
+function toast(msg, isError=false) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.style.borderColor = isError ? 'var(--red)' : 'var(--green)';
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 3500);
+}
+
+// ── Auto-pilot ────────────────────────────────────────────────────────────────
+async function refreshAutopilot() {
+  try {
+    const r = await fetch(`${API}/autopilot`);
+    const d = await r.json();
+
+    const toggle = $('apToggle');
+    toggle.checked = d.enabled;
+
+    const status = $('apStatus');
+    status.textContent = d.enabled ? 'ON' : 'OFF';
+    status.className = 'ap-status ' + (d.enabled ? 'ap-on' : 'ap-off');
+
+    const market = $('marketBadge');
+    if (d.market_open) {
+      market.textContent = '🟢 Market Open';
+      market.className = 'market-badge market-open';
+      $('statusDot').className = 'dot';
+    } else {
+      market.textContent = '⏸ Market Closed';
+      market.className = 'market-badge market-closed';
+      $('statusDot').className = 'dot yellow';
+    }
+
+    $('apTrades').textContent = d.trades_today;
+    $('apLastScan').textContent = timeSince(d.last_screen);
+    $('apLastCheck').textContent = timeSince(d.last_check);
+
+    // Sync force mode button
+    _forceMode = d.force_mode || false;
+    const btn = $('forceModeBtn');
+    if (btn) {
+      btn.textContent = _forceMode ? '🧪 Test Mode: ON' : '🧪 Test Mode: OFF';
+      btn.style.background = _forceMode ? '#3a1a5a' : '#2a1a3a';
+      btn.style.color = _forceMode ? '#e0b0ff' : '#bc8cff';
+    }
+  } catch(e) {
+    $('statusDot').className = 'dot red';
+  }
+}
+
+let _forceMode = false;
+async function toggleForceMode() {
+  _forceMode = !_forceMode;
+  const endpoint = _forceMode ? '/autopilot/force-mode/enable' : '/autopilot/force-mode/disable';
+  try {
+    await fetch(`${API}${endpoint}`, {method:'POST'});
+    const btn = $('forceModeBtn');
+    if (_forceMode) {
+      btn.textContent = '🧪 Test Mode: ON';
+      btn.style.background = '#3a1a5a';
+      btn.style.borderColor = '#bc8cff';
+      btn.style.color = '#e0b0ff';
+      toast('🧪 Test Mode ON — auto-pilot ignores market hours. Remember to turn off!');
+    } else {
+      btn.textContent = '🧪 Test Mode: OFF';
+      btn.style.background = '#2a1a3a';
+      btn.style.color = '#bc8cff';
+      toast('✅ Test Mode OFF — market hours enforced');
+    }
+    refreshAutopilot();
+  } catch(e) { toast('Server offline', true); }
+}
+
+async function toggleAutopilot(enabled) {
+  try {
+    const endpoint = enabled ? '/autopilot/enable' : '/autopilot/disable';
+    const r = await fetch(`${API}${endpoint}`, {method:'POST'});
+    const d = await r.json();
+    toast(enabled ? '🟢 Auto-pilot ON — bots will trade automatically during market hours' : '🔴 Auto-pilot OFF');
+    refreshAutopilot();
+    refreshLogs();
+  } catch(e) { toast('Server offline', true); }
+}
+
+async function forceScan() {
+  try {
+    await fetch(`${API}/autopilot/scan-now`, {method:'POST'});
+    toast('⚡ Immediate buy scan triggered');
+    setTimeout(refreshLogs, 3000);
+    setTimeout(refreshPortfolio, 15000);
+  } catch(e) { toast('Server offline', true); }
+}
+
+async function forceCheck() {
+  try {
+    await fetch(`${API}/autopilot/check-now`, {method:'POST'});
+    toast('🔍 Position check triggered');
+    setTimeout(refreshLogs, 3000);
+    setTimeout(refreshPortfolio, 10000);
+  } catch(e) { toast('Server offline', true); }
+}
+
+// ── Portfolio ─────────────────────────────────────────────────────────────────
+async function refreshPortfolio() {
+  try {
+    const r = await fetch(`${API}/portfolio`);
+    const d = await r.json();
+
+    $('totalEquity').textContent = fmt$(d.total_equity);
+    $('cash').textContent = fmt$(d.cash);
+    $('marketValue').textContent = fmt$(d.total_market_value);
+
+    const pnl = d.unrealized_pnl || 0;
+    const pnlEl = $('unrealizedPnl');
+    pnlEl.textContent = (pnl >= 0 ? '+' : '') + fmt$(Math.abs(pnl)).replace('$','$');
+    if (pnl >= 0) { pnlEl.textContent = '+' + fmt$(pnl); pnlEl.className = 'stat-value green'; }
+    else { pnlEl.textContent = '-' + fmt$(Math.abs(pnl)); pnlEl.className = 'stat-value red'; }
+
+    const cashPct = d.total_equity ? (d.cash / d.total_equity * 100).toFixed(1) : 0;
+    $('cashPct').textContent = `${cashPct}% of equity`;
+
+    const pos = d.positions || {};
+    const posKeys = Object.keys(pos);
+    $('posCount').textContent = `${posKeys.length} position${posKeys.length !== 1 ? 's' : ''}`;
+
+    const tbody = $('positionsBody');
+    if (!posKeys.length) {
+      tbody.innerHTML = '<tr><td colspan="7"><div class="empty"><div class="empty-icon">📭</div>No open positions — auto-pilot will buy when setups appear</div></td></tr>';
+    } else {
+      tbody.innerHTML = posKeys.map(sym => {
+        const p = pos[sym];
+        const pnlPct = p.pnl_pct || 0;
+        const pnlCls = pnlPct >= 0 ? 'pnl-positive' : 'pnl-negative';
+        const pnlSign = pnlPct >= 0 ? '+' : '';
+        const score = p.swing_score;
+        const stopStr  = p.stop_loss   ? `<div class="stop-tag">▼ ${fmt$(p.stop_loss)}</div>`   : '';
+        const targetStr= p.take_profit ? `<div class="target-tag">▲ ${fmt$(p.take_profit)}</div>` : '';
+        const scoreHtml = score ? `<div class="score-wrap"><div class="score-bar-bg"><div class="score-bar-fill" style="width:${score}%"></div></div><span class="score-num ${score>=65?'green':score>=45?'yellow':'red'}">${score}</span></div>` : '—';
+        return `<tr>
+          <td><span class="symbol-badge" onclick="$('analyzeInput').value='${sym}'">${sym}</span></td>
+          <td class="mono">${Number(p.shares).toFixed(2)}</td>
+          <td class="mono">${fmt$(p.avg_cost)}</td>
+          <td class="mono">${fmt$(p.current_price)}</td>
+          <td class="mono ${pnlCls}">${pnlSign}${fmtPct(pnlPct)}</td>
+          <td><div class="price-range">${stopStr}${targetStr}</div></td>
+          <td>${scoreHtml}</td>
+        </tr>`;
+      }).join('');
+    }
+    $('lastUpdate').textContent = 'Updated ' + new Date().toLocaleTimeString();
+  } catch(e) {
+    $('lastUpdate').textContent = '⚠ Server offline';
+    $('statusDot').className = 'dot red';
+  }
+}
+
+// ── History ───────────────────────────────────────────────────────────────────
+async function refreshHistory() {
+  try {
+    const r = await fetch(`${API}/history`);
+    const d = await r.json();
+    const trades = d.trades || [];
+    const tbody = $('historyBody');
+    if (!trades.length) {
+      tbody.innerHTML = '<tr><td colspan="6"><div class="empty"><div class="empty-icon">📜</div>No trades yet</div></td></tr>';
+      return;
+    }
+    tbody.innerHTML = trades.map(t => {
+      const isBuy = t.action === 'BUY';
+      const ts = (t.ts||'').slice(0,16).replace('T',' ');
+      const isAuto = (t.reason||'').startsWith('Auto');
+      return `<tr>
+        <td style="font-size:11px;color:var(--muted)">${ts}</td>
+        <td><span class="symbol-badge">${t.symbol}</span></td>
+        <td>
+          <span class="action-badge ${isBuy?'badge-buy':'badge-sell'}">${t.action}</span>
+          ${isAuto ? '<span class="action-badge badge-auto" style="margin-left:3px">AUTO</span>' : ''}
+        </td>
+        <td class="mono">${Number(t.shares).toFixed(2)}</td>
+        <td class="mono">${fmt$(t.price)}</td>
+        <td style="font-size:11px;color:var(--muted);max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${t.reason}">${t.reason||'—'}</td>
+      </tr>`;
+    }).join('');
+  } catch(e) {}
+}
+
+// ── Activity Log ──────────────────────────────────────────────────────────────
+async function refreshLogs() {
+  try {
+    const r = await fetch(`${API}/logs?limit=30`);
+    const d = await r.json();
+    const events = d.events || [];
+    const feed = $('logFeed');
+    if (!events.length) { feed.innerHTML = '<div class="empty" style="padding:16px;">No activity yet</div>'; return; }
+    feed.innerHTML = events.map(e => {
+      const ts = (e.ts||'').slice(11,19);
+      const isAuto = e.source === 'auto';
+      const level = e.level || '';
+      let cls = isAuto ? 'log-auto' : 'log-webhook';
+      if (level === 'warning') cls = 'log-warning';
+      if (level === 'error')   cls = 'log-error';
+      const text = e.msg || [e.type, e.symbol, e.signal].filter(Boolean).join(' › ');
+      return `<div class="log-entry">
+        <span class="log-ts">${ts}</span>
+        <span class="log-msg ${cls}">${text}</span>
+      </div>`;
+    }).join('');
+  } catch(e) {}
+}
+
+// ── Screener ──────────────────────────────────────────────────────────────────
+async function triggerScreen() {
+  const btn = $('screenBtn');
+  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Scanning...';
+  $('screenerBody').innerHTML = '<tr><td colspan="7"><div class="empty"><span class="spinner"></span>&nbsp; Scanning watchlist...</div></td></tr>';
+  try {
+    const r = await fetch(`${API}/screen?top_n=8`);
+    const d = await r.json();
+    const setups = d.setups || [];
+    const tbody = $('screenerBody');
+    if (!setups.length) {
+      tbody.innerHTML = '<tr><td colspan="7"><div class="empty"><div class="empty-icon">😴</div>No strong setups right now</div></td></tr>';
+    } else {
+      const actionMap = {'STRONG BUY':'badge-strong','BUY':'badge-buy','SELL':'badge-sell','HOLD':'badge-hold','WATCH':'badge-watch','NEUTRAL':'badge-neutral','AVOID':'badge-sell'};
+      tbody.innerHTML = setups.map(s => {
+        const score = s.score || 0;
+        const badgeCls = actionMap[s.action] || 'badge-neutral';
+        const upside = s.upside_pct != null ? (s.upside_pct > 0 ? '+' : '') + s.upside_pct.toFixed(1) + '%' : '—';
+        const rsi = s.rsi ? s.rsi.toFixed(0) : '—';
+        const rsiCls = s.rsi < 35 ? 'green' : s.rsi > 68 ? 'red' : '';
+        return `<tr>
+          <td><span class="symbol-badge" onclick="$('analyzeInput').value='${s.symbol}'">${s.symbol}</span></td>
+          <td><div class="score-wrap"><div class="score-bar-bg"><div class="score-bar-fill" style="width:${score}%"></div></div><span class="score-num ${score>=65?'green':score>=45?'yellow':'red'}">${score}</span></div></td>
+          <td><span class="action-badge ${badgeCls}">${s.action}</span></td>
+          <td class="mono">${s.price ? fmt$(s.price) : '—'}</td>
+          <td class="mono ${rsiCls}">${rsi}</td>
+          <td class="mono">${s.take_profit ? fmt$(s.take_profit) : '—'}</td>
+          <td class="mono ${s.upside_pct > 0 ? 'green' : 'red'}">${upside}</td>
+        </tr>`;
+      }).join('');
+    }
+    toast(`✅ Scanned ${d.scanned} stocks — ${setups.length} setup(s) found`);
+    setTimeout(refreshLogs, 2000);
+  } catch(e) {
+    $('screenerBody').innerHTML = '<tr><td colspan="7"><div class="empty">Server offline</div></td></tr>';
+    toast('Server offline', true);
+  } finally { btn.disabled = false; btn.innerHTML = 'Scan Now'; }
+}
+
+// ── Manual Analyze ────────────────────────────────────────────────────────────
+async function analyzeStock() {
+  const input = $('analyzeInput');
+  const symbol = input.value.trim().toUpperCase();
+  if (!symbol) { toast('Enter a ticker first', true); return; }
+  const btn = $('analyzeBtn');
+  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>';
+  $('analyzeResult').innerHTML = `<span style="color:var(--blue)"><span class="spinner"></span>&nbsp; Bot team analyzing <strong>${symbol}</strong>... (~30s)</span>`;
+  try {
+    await fetch(`${API}/analyze/${symbol}`, {method:'POST'});
+    $('analyzeResult').innerHTML = `<span style="color:var(--green)">✅ Analysis triggered for <strong>${symbol}</strong>. Watch the activity log for results.</span>`;
+    toast(`🤖 Bot team analyzing ${symbol}`);
+    input.value = '';
+    setTimeout(refreshLogs, 5000);
+    setTimeout(refreshPortfolio, 45000);
+  } catch(e) {
+    $('analyzeResult').innerHTML = `<span style="color:var(--red)">❌ Server offline</span>`;
+    toast('Server offline', true);
+  } finally { btn.disabled = false; btn.innerHTML = '▶ Run'; }
+}
+$('analyzeInput').addEventListener('keydown', e => { if(e.key==='Enter') analyzeStock(); });
+
+// ── Watchlist ─────────────────────────────────────────────────────────────────
+async function refreshWatchlist() {
+  try {
+    const r = await fetch(`${API}/watchlist`);
+    const d = await r.json();
+    const wl = d.watchlist || [];
+    $('watchlistGrid').innerHTML = wl.map(sym =>
+      `<div style="display:flex;align-items:center;gap:3px;">
+        <span class="symbol-badge" onclick="$('analyzeInput').value='${sym}'">${sym}</span>
+        <span style="cursor:pointer;color:var(--muted);font-size:10px;padding:2px" onclick="removeFromWatchlist('${sym}')">✕</span>
+      </div>`
+    ).join('') || '<div class="empty">Empty</div>';
+  } catch(e) {}
+}
+
+async function addToWatchlist() {
+  const input = $('watchlistInput');
+  const sym = input.value.trim().toUpperCase();
+  if (!sym) return;
+  try {
+    await fetch(`${API}/watchlist/${sym}`, {method:'POST'});
+    input.value = ''; toast(`✅ Added ${sym}`); refreshWatchlist();
+  } catch(e) { toast('Server offline', true); }
+}
+async function removeFromWatchlist(sym) {
+  try { await fetch(`${API}/watchlist/${sym}`, {method:'DELETE'}); toast(`Removed ${sym}`); refreshWatchlist(); } catch(e) {}
+}
+$('watchlistInput').addEventListener('keydown', e => { if(e.key==='Enter') addToWatchlist(); });
+
+// ── Init & refresh loops ──────────────────────────────────────────────────────
+async function refreshAll() {
+  await Promise.all([refreshPortfolio(), refreshHistory(), refreshLogs(), refreshWatchlist(), refreshAutopilot()]);
+}
+
+refreshAll();
+setInterval(refreshPortfolio, 30000);
+setInterval(refreshAutopilot, 15000);
+setInterval(refreshLogs, 8000);
+setInterval(refreshHistory, 60000);
+setInterval(refreshWatchlist, 120000);
+</script>
+</body>
+</html>
