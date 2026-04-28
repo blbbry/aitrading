@@ -40,7 +40,7 @@ SCREEN_INTERVAL_MIN = 30      # screen watchlist every N minutes
 CHECK_INTERVAL_MIN  = 5       # check stop/target every N minutes
 
 # Shared state — readable by server
-COOLDOWN_HOURS = 24   # hours to wait before re-buying a recently sold stock
+COOLDOWN_HOURS = 2    # hours to wait before re-buying a recently sold stock
 
 state = {
     "enabled": False,
