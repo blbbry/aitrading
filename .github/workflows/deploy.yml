@@ -15,7 +15,17 @@ jobs:
 
       - uses: superfly/flyctl-actions/setup-flyctl@master
 
-      - name: Deploy to Fly.io
-        run: flyctl deploy --remote-only --ha=false --strategy=immediate
+      - name: Build & push image
+        run: flyctl deploy --remote-only --build-only --push 2>&1 | tee /tmp/build.txt
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
+      - name: Update machine in place
+        run: |
+          IMAGE=$(grep "^image:" /tmp/build.txt | awk '{print $2}')
+          echo "Deploying image: $IMAGE"
+          MACHINE_ID=$(flyctl machine list --json | python3 -c "import sys,json; print(json.load(sys.stdin)[0]['id'])")
+          echo "Updating machine: $MACHINE_ID"
+          flyctl machine update "$MACHINE_ID" --image "$IMAGE" --yes
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
