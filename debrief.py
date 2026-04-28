@@ -156,7 +156,7 @@ Write a friendly, clear daily trading debrief email for a beginner swing trader.
 Keep it conversational, encouraging, and educational. Use emojis. Max 400 words."""
 
     response = client.messages.create(
-        model="claude-haiku-3-5",   # cheapest model — saves credits
+        model="claude-haiku-4-5",   # cheapest model — saves credits
         max_tokens=1024,
         messages=[{"role": "user", "content": prompt}],
     )
