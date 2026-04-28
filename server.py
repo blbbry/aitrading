@@ -17,6 +17,7 @@ import os
 import json
 import asyncio
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from fastapi import FastAPI, Request, HTTPException, BackgroundTasks
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -45,17 +46,52 @@ _STATIC = os.path.join(os.path.dirname(__file__), "static")
 app.mount("/static", StaticFiles(directory=_STATIC), name="static")
 
 # ── Auto-trader lifecycle ─────────────────────────────────────────────────────
-_auto_trader_task = None
+_auto_trader_task  = None
+_debrief_task      = None
+PT = ZoneInfo("America/Los_Angeles")
+
+
+async def run_daily_debrief_scheduler():
+    """Runs at 1:05pm PT every weekday (5 min after market close)."""
+    import debrief
+    print("[Debrief] Scheduler started — will send debrief at 1:05pm PT on trading days")
+    last_sent_date = None
+
+    while True:
+        try:
+            now = datetime.now(PT)
+            # Only on weekdays
+            if now.weekday() < 5:
+                # Fire at 13:05 PT (1:05pm)
+                if now.hour == 13 and now.minute == 5:
+                    today = now.date()
+                    if last_sent_date != today:
+                        print(f"[Debrief] 🕐 1:05pm PT — sending daily debrief for {today}")
+                        try:
+                            debrief.run_debrief()
+                            last_sent_date = today
+                        except Exception as e:
+                            print(f"[Debrief] ❌ Error running debrief: {e}")
+            await asyncio.sleep(30)   # check every 30 seconds
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            print(f"[Debrief] Scheduler error: {e}")
+            await asyncio.sleep(60)
+
 
 @app.on_event("startup")
 async def startup():
-    global _auto_trader_task
+    global _auto_trader_task, _debrief_task
     _auto_trader_task = asyncio.create_task(auto_trader.run_auto_trader())
+    _debrief_task     = asyncio.create_task(run_daily_debrief_scheduler())
 
 @app.on_event("shutdown")
 async def shutdown():
     if _auto_trader_task:
         _auto_trader_task.cancel()
+    if _debrief_task:
+        _debrief_task.cancel()
 
 # In-memory log of recent webhook events
 event_log: list[dict] = []
@@ -334,6 +370,14 @@ def get_logs(limit: int = 20):
     wh_logs = [{"ts": e.get("ts",""), "type": e.get("type",""), "symbol": e.get("symbol",""), "signal": e.get("signal",""), "source": "webhook"} for e in event_log[:limit]]
     combined = sorted(at_logs + wh_logs, key=lambda x: x.get("ts",""), reverse=True)
     return {"events": combined[:limit]}
+
+
+@app.post("/debrief/send-now")
+async def send_debrief_now(background_tasks: BackgroundTasks):
+    """Manually trigger the daily debrief email right now (for testing)."""
+    import debrief
+    background_tasks.add_task(debrief.run_debrief)
+    return {"message": "Debrief email triggered — check your inbox in ~30 seconds!"}
 
 
 @app.get("/review")

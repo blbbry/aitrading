@@ -7,6 +7,7 @@ primary_region = "ord"   # Chicago — closest to US markets
 
 [env]
   STARTING_CASH = "10000"
+  RESEND_FROM_EMAIL = "onboarding@resend.dev"
 
 [[mounts]]
   source = "trading_data"
