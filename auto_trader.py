@@ -40,6 +40,8 @@ SCREEN_INTERVAL_MIN = 30      # screen watchlist every N minutes
 CHECK_INTERVAL_MIN  = 5       # check stop/target every N minutes
 
 # Shared state — readable by server
+COOLDOWN_HOURS = 24   # hours to wait before re-buying a recently sold stock
+
 state = {
     "enabled": False,
     "force_mode": False,   # bypass market hours check for testing
@@ -47,6 +49,7 @@ state = {
     "last_check": None,
     "trades_today": 0,
     "log": [],
+    "cooldowns": {},       # symbol → datetime when cooldown expires
 }
 
 
@@ -107,6 +110,12 @@ def _should_buy(symbol: str, setup: dict) -> tuple[bool, str]:
 
     if symbol in positions:
         return False, "already holding"
+
+    # Check cooldown — don't re-buy recently sold stocks
+    cooldown_until = state["cooldowns"].get(symbol)
+    if cooldown_until and datetime.utcnow() < cooldown_until:
+        remaining = int((cooldown_until - datetime.utcnow()).total_seconds() / 3600)
+        return False, f"cooldown active for {remaining}h more (recently sold)"
 
     if len(positions) >= MAX_POSITIONS:
         return False, f"max positions ({MAX_POSITIONS}) reached"
@@ -297,7 +306,9 @@ def run_position_check():
                     pnl = result.get("pnl", 0)
                     pnl_str = f"+${pnl:.2f}" if pnl >= 0 else f"-${abs(pnl):.2f}"
                     state["trades_today"] += 1
-                    _log(f"  🔴 SOLD {shares:.2f}x {symbol} @ ${price:.2f} | P&L: {pnl_str} | {reason}")
+                    # Set cooldown to prevent immediate re-buy
+                    state["cooldowns"][symbol] = datetime.utcnow() + timedelta(hours=COOLDOWN_HOURS)
+                    _log(f"  🔴 SOLD {shares:.2f}x {symbol} @ ${price:.2f} | P&L: {pnl_str} | {reason} | cooldown {COOLDOWN_HOURS}h")
                 else:
                     _log(f"  ❌ Sell failed {symbol}: {result.get('error')}", "warning")
             else:
