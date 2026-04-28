@@ -129,11 +129,11 @@ def score_swing_setup(symbol: str) -> dict:
             score += 5  # contrarian bounce potential
 
     # ── Risk/reward estimate ───────────────────────────────────────────────────
-    # Cap stop at 4% and target at 8%
-    raw_stop    = (price - 1.2 * atr) if atr and price else (price * 0.96 if price else None)
-    raw_target  = (price + 1.8 * atr) if atr and price else (price * 1.08 if price else None)
-    stop_loss   = round(max(raw_stop,   price * 0.96), 2) if raw_stop   else None
-    take_profit = round(min(raw_target, price * 1.08), 2) if raw_target else None
+    # Cap stop at 5% and target at 15%
+    raw_stop    = (price - 1.5 * atr) if atr and price else (price * 0.95 if price else None)
+    raw_target  = (price + 3.0 * atr) if atr and price else (price * 1.15 if price else None)
+    stop_loss   = round(max(raw_stop,   price * 0.95), 2) if raw_stop   else None
+    take_profit = round(min(raw_target, price * 1.15), 2) if raw_target else None
     risk_pct = round((price - stop_loss) / price * 100, 1) if stop_loss and price else None
     reward_pct = round((take_profit - price) / price * 100, 1) if take_profit and price else None
 

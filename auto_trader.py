@@ -179,11 +179,11 @@ def run_buy_scan():
 
         atr = setup.get("atr")
         shares = calc_shares(price, atr, equity)
-        # Cap stop at 4% and target at 8% regardless of ATR
-        raw_stop   = price - 1.2 * atr if atr else price * 0.96
-        raw_target = price + 1.8 * atr if atr else price * 1.08
-        stop_loss   = round(max(raw_stop,   price * 0.96), 2)   # never more than 4% below
-        take_profit = round(min(raw_target, price * 1.08), 2)   # never more than 8% above
+        # Cap stop at 5% and target at 15% — standard swing trade ranges
+        raw_stop   = price - 1.5 * atr if atr else price * 0.95
+        raw_target = price + 3.0 * atr if atr else price * 1.15
+        stop_loss   = round(max(raw_stop,   price * 0.95), 2)   # never more than 5% below
+        take_profit = round(min(raw_target, price * 1.15), 2)   # never more than 15% above
 
         # Build reason from free signals only — no Claude call needed
         top_signals = [s["signal"] for s in setup.get("signals", []) if s["bullish"]][:2]
