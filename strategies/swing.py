@@ -7,14 +7,24 @@ Targets: multi-day to multi-week holds, 5-20%+ gain potential.
 from tools.market_data import compute_technicals, get_fundamentals
 
 
-def score_swing_setup(symbol: str) -> dict:
+def score_swing_setup(symbol: str, weights: dict = None) -> dict:
     """
     Score a stock for swing trade potential (0-100).
     Returns signals, score, and recommended action.
+
+    Args:
+        weights: Optional dict of signal_name → weight multiplier from the
+                 learning system. Defaults to 1.0 for all signals if not provided.
     """
     tech = compute_technicals(symbol, days=120)
     if "error" in tech:
         return {"symbol": symbol, "error": tech["error"], "score": 0}
+
+    _w = weights or {}
+
+    def pts(signal_name: str, base: int) -> int:
+        """Apply the learned weight multiplier to a base point value."""
+        return round(base * _w.get(signal_name, 1.0))
 
     signals = []
     score = 0
@@ -38,62 +48,62 @@ def score_swing_setup(symbol: str) -> dict:
     if rsi is not None:
         if 30 <= rsi <= 45:
             signals.append({"signal": "RSI_OVERSOLD_RECOVERY", "detail": f"RSI {rsi:.1f} — bouncing from oversold zone", "bullish": True})
-            score += 20
+            score += pts("RSI_OVERSOLD_RECOVERY", 20)
         elif rsi < 30:
             signals.append({"signal": "RSI_OVERSOLD", "detail": f"RSI {rsi:.1f} — extreme oversold, watch for reversal", "bullish": True})
-            score += 15
+            score += pts("RSI_OVERSOLD", 15)
         elif 55 <= rsi <= 65:
             signals.append({"signal": "RSI_BULLISH_MOMENTUM", "detail": f"RSI {rsi:.1f} — healthy momentum, not overbought", "bullish": True})
-            score += 10
+            score += pts("RSI_BULLISH_MOMENTUM", 10)
         elif rsi > 70:
             signals.append({"signal": "RSI_OVERBOUGHT", "detail": f"RSI {rsi:.1f} — overbought, risk of pullback", "bullish": False})
-            score -= 15
+            score -= pts("RSI_OVERBOUGHT", 15)
 
     # ── MACD signals ───────────────────────────────────────────────────────────
     if macd_hist is not None and macd_line is not None:
         if macd_hist > 0 and macd_line > macd_signal:
             signals.append({"signal": "MACD_BULLISH_CROSS", "detail": "MACD crossed above signal line — bullish momentum", "bullish": True})
-            score += 20
+            score += pts("MACD_BULLISH_CROSS", 20)
         elif macd_hist < 0 and abs(macd_hist) < 0.5:
             signals.append({"signal": "MACD_APPROACHING_CROSS", "detail": "MACD histogram narrowing — potential bullish crossover near", "bullish": True})
-            score += 10
+            score += pts("MACD_APPROACHING_CROSS", 10)
         elif macd_hist < -1:
             signals.append({"signal": "MACD_BEARISH", "detail": "MACD deeply negative — bearish momentum", "bullish": False})
-            score -= 10
+            score -= pts("MACD_BEARISH", 10)
 
     # ── Moving average signals ─────────────────────────────────────────────────
     if sma20 and price:
         if price > sma20:
             signals.append({"signal": "ABOVE_SMA20", "detail": f"Price ${price:.2f} above SMA20 ${sma20:.2f} — short-term uptrend", "bullish": True})
-            score += 10
+            score += pts("ABOVE_SMA20", 10)
         elif price < sma20 * 0.97:
             signals.append({"signal": "BELOW_SMA20", "detail": f"Price ${price:.2f} below SMA20 — short-term downtrend", "bullish": False})
-            score -= 5
+            score -= pts("BELOW_SMA20", 5)
 
     if sma50 and price:
         if price > sma50:
             signals.append({"signal": "ABOVE_SMA50", "detail": f"Price above SMA50 ${sma50:.2f} — medium-term uptrend", "bullish": True})
-            score += 10
+            score += pts("ABOVE_SMA50", 10)
         else:
             signals.append({"signal": "BELOW_SMA50", "detail": f"Price below SMA50 — medium-term caution", "bullish": False})
-            score -= 5
+            score -= pts("BELOW_SMA50", 5)
 
     if sma200 and price:
         if price > sma200:
             signals.append({"signal": "ABOVE_SMA200", "detail": "Price above SMA200 — in long-term uptrend", "bullish": True})
-            score += 10
+            score += pts("ABOVE_SMA200", 10)
         else:
             signals.append({"signal": "BELOW_SMA200", "detail": "Price below SMA200 — long-term downtrend caution", "bullish": False})
-            score -= 10
+            score -= pts("BELOW_SMA200", 10)
 
     # ── Golden / Death cross ───────────────────────────────────────────────────
     if sma20 and sma50:
         if sma20 > sma50:
             signals.append({"signal": "GOLDEN_CROSS_ZONE", "detail": "SMA20 > SMA50 — golden cross alignment", "bullish": True})
-            score += 10
+            score += pts("GOLDEN_CROSS_ZONE", 10)
         else:
             signals.append({"signal": "DEATH_CROSS_ZONE", "detail": "SMA20 < SMA50 — death cross alignment", "bullish": False})
-            score -= 10
+            score -= pts("DEATH_CROSS_ZONE", 10)
 
     # ── Bollinger Band signals ─────────────────────────────────────────────────
     if bb_lower and bb_upper and price:
@@ -102,31 +112,31 @@ def score_swing_setup(symbol: str) -> dict:
             bb_position = (price - bb_lower) / bb_range
             if bb_position < 0.2:
                 signals.append({"signal": "BB_LOWER_BAND", "detail": f"Price near lower Bollinger Band — potential mean reversion bounce", "bullish": True})
-                score += 15
+                score += pts("BB_LOWER_BAND", 15)
             elif bb_position > 0.8:
                 signals.append({"signal": "BB_UPPER_BAND", "detail": "Price near upper Bollinger Band — may be stretched", "bullish": False})
-                score -= 5
+                score -= pts("BB_UPPER_BAND", 5)
 
     # ── Volume signals ─────────────────────────────────────────────────────────
     if vol_ratio is not None:
         if vol_ratio > 1.5:
             signals.append({"signal": "HIGH_VOLUME", "detail": f"Volume {vol_ratio:.1f}x above average — strong conviction move", "bullish": True})
-            score += 10
+            score += pts("HIGH_VOLUME", 10)
         elif vol_ratio < 0.5:
             signals.append({"signal": "LOW_VOLUME", "detail": "Volume very low — weak move, less reliable signal", "bullish": False})
-            score -= 5
+            score -= pts("LOW_VOLUME", 5)
 
     # ── Momentum ───────────────────────────────────────────────────────────────
     if change_5d is not None:
         if 2 <= change_5d <= 8:
             signals.append({"signal": "HEALTHY_5D_MOMENTUM", "detail": f"+{change_5d:.1f}% in 5 days — strong but not extended", "bullish": True})
-            score += 5
+            score += pts("HEALTHY_5D_MOMENTUM", 5)
         elif change_5d > 12:
             signals.append({"signal": "EXTENDED_5D", "detail": f"+{change_5d:.1f}% in 5 days — may be extended, wait for pullback", "bullish": False})
-            score -= 5
+            score -= pts("EXTENDED_5D", 5)
         elif change_5d < -8:
             signals.append({"signal": "SHARP_5D_SELLOFF", "detail": f"{change_5d:.1f}% in 5 days — sharp drop, watch for reversal", "bullish": True})
-            score += 5  # contrarian bounce potential
+            score += pts("SHARP_5D_SELLOFF", 5)  # contrarian bounce potential
 
     # ── Risk/reward estimate ───────────────────────────────────────────────────
     # Cap stop at 5% and target at 15%

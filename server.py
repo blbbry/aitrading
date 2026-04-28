@@ -24,6 +24,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 import portfolio
 import auto_trader
+import learning
 from watchlist import load_watchlist, add_symbol, remove_symbol
 from dotenv import load_dotenv
 
@@ -83,6 +84,7 @@ async def run_daily_debrief_scheduler():
 @app.on_event("startup")
 async def startup():
     global _auto_trader_task, _debrief_task
+    learning.init_learning_db()
     _auto_trader_task = asyncio.create_task(auto_trader.run_auto_trader())
     _debrief_task     = asyncio.create_task(run_daily_debrief_scheduler())
 
@@ -370,6 +372,12 @@ def get_logs(limit: int = 20):
     wh_logs = [{"ts": e.get("ts",""), "type": e.get("type",""), "symbol": e.get("symbol",""), "signal": e.get("signal",""), "source": "webhook"} for e in event_log[:limit]]
     combined = sorted(at_logs + wh_logs, key=lambda x: x.get("ts",""), reverse=True)
     return {"events": combined[:limit]}
+
+
+@app.get("/learning")
+def get_learning():
+    """Returns signal weights and performance stats from the adaptive learning system."""
+    return learning.get_learning_stats()
 
 
 @app.post("/debrief/send-now")

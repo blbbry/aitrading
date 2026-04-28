@@ -12,6 +12,7 @@ Swing trading rules enforced:
 """
 
 import asyncio
+import json
 import logging
 from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
@@ -20,6 +21,7 @@ from tools.market_data import compute_technicals, get_current_price
 from strategies.swing import score_swing_setup
 from watchlist import load_watchlist
 import portfolio
+import learning
 
 log = logging.getLogger("auto_trader")
 logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(levelname)s %(message)s", datefmt="%H:%M:%S")
@@ -104,7 +106,9 @@ def calc_shares(price: float, atr: float, equity: float) -> float:
 
 
 # ── BUY logic ─────────────────────────────────────────────────────────────────
-def _should_buy(symbol: str, setup: dict) -> tuple[bool, str]:
+def _should_buy(symbol: str, setup: dict,
+                min_rsi: float = MIN_RSI_BUY,
+                max_rsi: float = MAX_RSI_BUY) -> tuple[bool, str]:
     """Returns (should_buy, reason_or_skip_reason)."""
     positions = portfolio.get_positions()
 
@@ -126,10 +130,10 @@ def _should_buy(symbol: str, setup: dict) -> tuple[bool, str]:
 
     rsi = setup.get("rsi")
     if rsi is not None:
-        if rsi < MIN_RSI_BUY:
-            return False, f"RSI {rsi:.0f} too low (min {MIN_RSI_BUY})"
-        if rsi > MAX_RSI_BUY:
-            return False, f"RSI {rsi:.0f} overbought (max {MAX_RSI_BUY})"
+        if rsi < min_rsi:
+            return False, f"RSI {rsi:.0f} too low (adaptive min {min_rsi})"
+        if rsi > max_rsi:
+            return False, f"RSI {rsi:.0f} overbought (adaptive max {max_rsi})"
 
     cash = portfolio.get_cash()
     price = setup.get("current_price", 0)
@@ -149,12 +153,26 @@ def run_buy_scan():
         return
 
     _log("🔭 Auto-scan: screening watchlist for swing setups...")
+
+    # Fetch learned weights + adaptive thresholds once for the whole scan
+    try:
+        weights    = learning.get_signal_weights()
+        thresholds = learning.get_adapted_thresholds()
+    except Exception:
+        weights    = {}
+        thresholds = {}
+
+    effective_min_rsi = thresholds.get("min_rsi_buy", MIN_RSI_BUY)
+    effective_max_rsi = thresholds.get("max_rsi_buy", MAX_RSI_BUY)
+    if thresholds.get("adapted"):
+        _log(f"  📚 Adaptive RSI range: {effective_min_rsi}–{effective_max_rsi} (learned from history)")
+
     symbols = load_watchlist()
     setups = []
 
     for sym in symbols:
         try:
-            s = score_swing_setup(sym)
+            s = score_swing_setup(sym, weights=weights)
             if "error" not in s:
                 setups.append(s)
         except Exception as e:
@@ -176,7 +194,9 @@ def run_buy_scan():
             break
 
         symbol = setup["symbol"]
-        ok, reason = _should_buy(symbol, setup)
+        ok, reason = _should_buy(symbol, setup,
+                                   min_rsi=effective_min_rsi,
+                                   max_rsi=effective_max_rsi)
         if not ok:
             _log(f"  ⏭  Skip {symbol}: {reason}")
             continue
@@ -195,7 +215,8 @@ def run_buy_scan():
         take_profit = round(min(raw_target, price * 1.15), 2)   # never more than 15% above
 
         # Build reason from free signals only — no Claude call needed
-        top_signals = [s["signal"] for s in setup.get("signals", []) if s["bullish"]][:2]
+        all_signal_names = [s["signal"] for s in setup.get("signals", [])]
+        top_signals      = [s["signal"] for s in setup.get("signals", []) if s["bullish"]][:2]
         reason = f"Auto-buy: score={setup['score']} RSI={setup.get('rsi','?'):.0f} signals={','.join(top_signals)}"
 
         result = portfolio.buy(
@@ -204,6 +225,8 @@ def run_buy_scan():
             stop_loss=stop_loss,
             take_profit=take_profit,
             swing_score=setup["score"],
+            entry_signals=all_signal_names,
+            entry_rsi=setup.get("rsi"),
         )
 
         if result.get("ok"):
@@ -301,6 +324,13 @@ def run_position_check():
 
             if should_sell:
                 shares = pos["shares"]
+
+                # Read learning data BEFORE sell() clears position_meta
+                entry_signals_raw = meta.get("entry_signals")
+                entry_signals     = json.loads(entry_signals_raw) if entry_signals_raw else []
+                entry_rsi         = meta.get("entry_rsi")
+                entry_date_str    = meta.get("entry_date")
+
                 result = portfolio.sell(symbol, shares, price, reason=f"Auto-sell: {reason}")
                 if result.get("ok"):
                     pnl = result.get("pnl", 0)
@@ -309,6 +339,27 @@ def run_position_check():
                     # Set cooldown to prevent immediate re-buy
                     state["cooldowns"][symbol] = datetime.utcnow() + timedelta(hours=COOLDOWN_HOURS)
                     _log(f"  🔴 SOLD {shares:.2f}x {symbol} @ ${price:.2f} | P&L: {pnl_str} | {reason} | cooldown {COOLDOWN_HOURS}h")
+
+                    # Record outcome for the learning system
+                    try:
+                        avg_cost = pos.get("avg_cost", price)
+                        pnl_pct  = (price - avg_cost) / avg_cost if avg_cost else 0
+                        hold_days = 0
+                        if entry_date_str:
+                            try:
+                                hold_days = (datetime.utcnow() - datetime.fromisoformat(entry_date_str)).days
+                            except Exception:
+                                pass
+                        learning.record_trade_outcome(
+                            symbol=symbol,
+                            pnl_pct=pnl_pct,
+                            entry_signals=entry_signals,
+                            hold_days=hold_days,
+                            rsi_at_entry=entry_rsi,
+                            entry_date=entry_date_str,
+                        )
+                    except Exception as e:
+                        _log(f"  ⚠️  Learning record failed for {symbol}: {e}", "warning")
                 else:
                     _log(f"  ❌ Sell failed {symbol}: {result.get('error')}", "warning")
             else:

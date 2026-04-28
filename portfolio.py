@@ -1,4 +1,5 @@
 import sqlite3
+import json
 import os
 from datetime import datetime
 from tabulate import tabulate
@@ -33,7 +34,9 @@ def init_db(starting_cash: float = 100_000.0):
                 take_profit REAL,
                 entry_date TEXT,
                 swing_score INTEGER,
-                entry_reason TEXT
+                entry_reason TEXT,
+                entry_signals TEXT,
+                entry_rsi REAL
             );
             CREATE TABLE IF NOT EXISTS trades (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -42,9 +45,24 @@ def init_db(starting_cash: float = 100_000.0):
                 action TEXT NOT NULL,
                 shares REAL NOT NULL,
                 price REAL NOT NULL,
-                reason TEXT
+                reason TEXT,
+                pnl REAL
             );
         """)
+        # Migrations: add new columns to existing DBs
+        existing_meta_cols = {
+            r[1] for r in con.execute("PRAGMA table_info(position_meta)").fetchall()
+        }
+        if "entry_signals" not in existing_meta_cols:
+            con.execute("ALTER TABLE position_meta ADD COLUMN entry_signals TEXT")
+        if "entry_rsi" not in existing_meta_cols:
+            con.execute("ALTER TABLE position_meta ADD COLUMN entry_rsi REAL")
+        existing_trade_cols = {
+            r[1] for r in con.execute("PRAGMA table_info(trades)").fetchall()
+        }
+        if "pnl" not in existing_trade_cols:
+            con.execute("ALTER TABLE trades ADD COLUMN pnl REAL")
+
         row = con.execute("SELECT id FROM portfolio").fetchone()
         if not row:
             con.execute("INSERT INTO portfolio (id, cash) VALUES (1, ?)", (starting_cash,))
@@ -74,18 +92,25 @@ def get_all_position_meta() -> dict:
 
 
 def set_position_meta(symbol: str, stop_loss: float, take_profit: float,
-                      swing_score: int = None, entry_reason: str = ""):
+                      swing_score: int = None, entry_reason: str = "",
+                      entry_signals: list = None, entry_rsi: float = None):
     now = datetime.utcnow().isoformat()
+    signals_json = json.dumps(entry_signals) if entry_signals else None
     with _conn() as con:
         con.execute("""
-            INSERT INTO position_meta (symbol, stop_loss, take_profit, entry_date, swing_score, entry_reason)
-            VALUES (?,?,?,?,?,?)
+            INSERT INTO position_meta
+              (symbol, stop_loss, take_profit, entry_date, swing_score,
+               entry_reason, entry_signals, entry_rsi)
+            VALUES (?,?,?,?,?,?,?,?)
             ON CONFLICT(symbol) DO UPDATE SET
                 stop_loss=excluded.stop_loss,
                 take_profit=excluded.take_profit,
                 swing_score=excluded.swing_score,
-                entry_reason=excluded.entry_reason
-        """, (symbol, stop_loss, take_profit, now, swing_score, entry_reason))
+                entry_reason=excluded.entry_reason,
+                entry_signals=excluded.entry_signals,
+                entry_rsi=excluded.entry_rsi
+        """, (symbol, stop_loss, take_profit, now, swing_score,
+              entry_reason, signals_json, entry_rsi))
 
 
 def clear_position_meta(symbol: str):
@@ -94,7 +119,8 @@ def clear_position_meta(symbol: str):
 
 
 def buy(symbol: str, shares: float, price: float, reason: str = "",
-        stop_loss: float = None, take_profit: float = None, swing_score: int = None) -> dict:
+        stop_loss: float = None, take_profit: float = None, swing_score: int = None,
+        entry_signals: list = None, entry_rsi: float = None) -> dict:
     cost = shares * price
     with _conn() as con:
         cash = con.execute("SELECT cash FROM portfolio WHERE id=1").fetchone()["cash"]
@@ -113,7 +139,8 @@ def buy(symbol: str, shares: float, price: float, reason: str = "",
             (datetime.utcnow().isoformat(), symbol, "BUY", shares, price, reason),
         )
     if stop_loss or take_profit:
-        set_position_meta(symbol, stop_loss, take_profit, swing_score, reason)
+        set_position_meta(symbol, stop_loss, take_profit, swing_score, reason,
+                          entry_signals=entry_signals, entry_rsi=entry_rsi)
     return {"ok": True, "symbol": symbol, "shares": shares, "price": price, "cost": cost,
             "stop_loss": stop_loss, "take_profit": take_profit}
 
@@ -134,8 +161,8 @@ def sell(symbol: str, shares: float, price: float, reason: str = "") -> dict:
             con.execute("UPDATE positions SET shares=? WHERE symbol=?", (new_shares, symbol))
         con.execute("UPDATE portfolio SET cash = cash + ? WHERE id=1", (proceeds,))
         con.execute(
-            "INSERT INTO trades (ts, symbol, action, shares, price, reason) VALUES (?,?,?,?,?,?)",
-            (datetime.utcnow().isoformat(), symbol, "SELL", shares, price, reason),
+            "INSERT INTO trades (ts, symbol, action, shares, price, reason, pnl) VALUES (?,?,?,?,?,?,?)",
+            (datetime.utcnow().isoformat(), symbol, "SELL", shares, price, reason, pnl),
         )
     return {"ok": True, "symbol": symbol, "shares": shares, "price": price, "proceeds": proceeds, "pnl": pnl}
 
