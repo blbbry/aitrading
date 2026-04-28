@@ -7,13 +7,13 @@ Sends an AI-powered email summary to the user.
 
 import os
 import sqlite3
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 import anthropic
-import urllib.request
-import urllib.error
-import json
 
 load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 
@@ -21,8 +21,8 @@ ET = ZoneInfo("America/New_York")
 PT = ZoneInfo("America/Los_Angeles")
 
 RECIPIENT_EMAIL = "zw@alexwang.com"
-SENDER_EMAIL    = os.environ.get("RESEND_FROM_EMAIL", "onboarding@resend.dev")
-RESEND_KEY      = os.environ.get("RESEND_API_KEY", "")
+GMAIL_USER      = os.environ.get("GMAIL_USER", "")
+GMAIL_APP_PASS  = os.environ.get("GMAIL_APP_PASS", "")
 
 
 # ── Data gathering ─────────────────────────────────────────────────────────────
@@ -166,37 +166,25 @@ Keep it conversational, encouraging, and educational. Use emojis. Max 400 words.
 # ── Email sending ─────────────────────────────────────────────────────────────
 
 def send_email(subject: str, body: str) -> bool:
-    if not RESEND_KEY:
-        print("[Debrief] No RESEND_API_KEY set — skipping email")
+    if not GMAIL_USER or not GMAIL_APP_PASS:
+        print("[Debrief] No GMAIL_USER or GMAIL_APP_PASS set — skipping email")
         return False
 
-    payload = json.dumps({
-        "from":    f"AI Swing Trader <{SENDER_EMAIL}>",
-        "to":      [RECIPIENT_EMAIL],
-        "subject": subject,
-        "text":    body,
-    }).encode()
-
-    req = urllib.request.Request(
-        "https://api.resend.com/emails",
-        data=payload,
-        headers={
-            "Authorization": f"Bearer {RESEND_KEY}",
-            "Content-Type":  "application/json",
-        },
-        method="POST",
-    )
     try:
-        with urllib.request.urlopen(req) as resp:
-            result = resp.read().decode()
-            print(f"[Debrief] ✅ Email sent! Status: {resp.status} | {result}")
-            return True
-    except urllib.error.HTTPError as e:
-        err = e.read().decode()
-        print(f"[Debrief] ❌ Email failed: {e.code} | {err}")
-        return False
+        msg = MIMEMultipart()
+        msg["From"]    = f"AI Swing Trader <{GMAIL_USER}>"
+        msg["To"]      = RECIPIENT_EMAIL
+        msg["Subject"] = subject
+        msg.attach(MIMEText(body, "plain"))
+
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
+            smtp.login(GMAIL_USER, GMAIL_APP_PASS)
+            smtp.sendmail(GMAIL_USER, RECIPIENT_EMAIL, msg.as_string())
+
+        print(f"[Debrief] ✅ Email sent to {RECIPIENT_EMAIL}")
+        return True
     except Exception as e:
-        print(f"[Debrief] ❌ Email error: {e}")
+        print(f"[Debrief] ❌ Email failed: {e}")
         return False
 
 
