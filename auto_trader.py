@@ -182,9 +182,13 @@ def run_buy_scan():
         stop_loss = round(price - 2 * atr, 2) if atr else round(price * 0.95, 2)
         take_profit = round(price + 3 * atr, 2) if atr else round(price * 1.10, 2)
 
+        # Build reason from free signals only — no Claude call needed
+        top_signals = [s["signal"] for s in setup.get("signals", []) if s["bullish"]][:2]
+        reason = f"Auto-buy: score={setup['score']} RSI={setup.get('rsi','?'):.0f} signals={','.join(top_signals)}"
+
         result = portfolio.buy(
             symbol, shares, price,
-            reason=f"Auto-buy: score={setup['score']}, RSI={setup.get('rsi', '?'):.0f}, action={setup['action']}",
+            reason=reason,
             stop_loss=stop_loss,
             take_profit=take_profit,
             swing_score=setup["score"],
@@ -230,14 +234,21 @@ def _check_exit_conditions(symbol: str, price: float, meta: dict, tech: dict) ->
     if in_profit and macd_hist is not None and macd_hist < -0.05:
         return True, f"MACD turned bearish (hist={macd_hist:.3f}) — locking profit"
 
-    # ── 5. Swing score collapse ────────────────────────────────────────────
-    try:
-        setup = score_swing_setup(symbol)
-        current_score = setup.get("score", 50)
-        if current_score < SELL_SCORE_FLOOR:
-            return True, f"Swing score collapsed to {current_score} (below floor {SELL_SCORE_FLOOR})"
-    except Exception:
-        pass
+    # ── 5. Swing score collapse (use already-fetched technicals, no extra API call) ──
+    # Approximate score from RSI + MACD — avoids a full score_swing_setup() call
+    approx_score = 50
+    if rsi is not None:
+        if rsi < 30: approx_score += 15
+        elif rsi < 45: approx_score += 10
+        elif rsi > 70: approx_score -= 20
+    if macd_hist is not None:
+        if macd_hist > 0: approx_score += 15
+        elif macd_hist < -0.5: approx_score -= 15
+    above_sma20 = tech.get("price_above_sma20")
+    if above_sma20 is True: approx_score += 10
+    elif above_sma20 is False: approx_score -= 10
+    if approx_score < SELL_SCORE_FLOOR:
+        return True, f"Approx score collapsed to {approx_score} (below floor {SELL_SCORE_FLOOR})"
 
     # ── 6. Time stop — max hold period ────────────────────────────────────
     if entry_date:

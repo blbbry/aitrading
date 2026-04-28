@@ -297,11 +297,8 @@ async def screen_watchlist(background_tasks: BackgroundTasks, top_n: int = 5):
         for r in results
     ]
 
-    # Auto-analyze top picks in background
-    for r in simplified[:3]:
-        background_tasks.add_task(run_swing_analysis, r["symbol"], "screen_auto")
-
-    return {"setups": simplified, "scanned": len(watchlist), "message": f"Top {len(simplified)} setups found. Auto-analyzing top 3."}
+    # No auto-Claude analysis — saves credits. Use manual Analyze button if needed.
+    return {"setups": simplified, "scanned": len(watchlist), "message": f"Top {len(simplified)} setups found."}
 
 
 @app.post("/analyze/{symbol}")
