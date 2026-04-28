@@ -188,10 +188,15 @@ def send_email(subject: str, body: str) -> bool:
     )
     try:
         with urllib.request.urlopen(req) as resp:
-            print(f"[Debrief] Email sent! Status: {resp.status}")
+            result = resp.read().decode()
+            print(f"[Debrief] ✅ Email sent! Status: {resp.status} | {result}")
             return True
     except urllib.error.HTTPError as e:
-        print(f"[Debrief] Email failed: {e.code} {e.read().decode()}")
+        err = e.read().decode()
+        print(f"[Debrief] ❌ Email failed: {e.code} | {err}")
+        return False
+    except Exception as e:
+        print(f"[Debrief] ❌ Email error: {e}")
         return False
 
 
