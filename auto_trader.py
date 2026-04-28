@@ -28,7 +28,7 @@ ET = ZoneInfo("America/New_York")
 
 # ── Config ────────────────────────────────────────────────────────────────────
 MIN_BUY_SCORE       = 65      # minimum swing score to trigger a buy
-MAX_POSITIONS       = 6       # max concurrent open positions
+MAX_POSITIONS       = 8       # max concurrent open positions
 MAX_POSITION_PCT    = 0.10    # max 10% of equity per position
 RISK_PER_TRADE_PCT  = 0.01    # risk 1% of equity per trade (ATR-based sizing)
 MIN_RSI_BUY         = 28      # don't buy if RSI below this (too volatile)
