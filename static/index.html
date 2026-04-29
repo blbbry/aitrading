@@ -190,9 +190,38 @@
   <div class="ap-actions">
     <button class="btn btn-orange" onclick="forceScan()"  title="Scan watchlist now">⚡ Scan Now</button>
     <button class="btn btn-ghost"  onclick="forceCheck()" title="Check positions now">🔍 Check Positions</button>
+    <button class="btn" id="alertModeBtn" onclick="toggleAlertMode()"
+      style="background:#1a2a1a;color:#3fb950;border:1px solid #2a4a2a;"
+      title="Send email alerts instead of auto-trading">📬 Alert Mode: OFF</button>
     <button class="btn" id="forceModeBtn" onclick="toggleForceMode()"
       style="background:#2a1a3a;color:#bc8cff;border:1px solid #4a2a6a;"
       title="Bypass market hours — for testing only">🧪 Test Mode: OFF</button>
+    <button class="btn btn-blue" onclick="showImportModal()" title="Import your Robinhood positions">📥 Import Positions</button>
+  </div>
+</div>
+
+<!-- Import Modal -->
+<div id="importModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:200;align-items:center;justify-content:center;">
+  <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:24px;width:480px;max-width:95vw;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+      <div style="font-size:15px;font-weight:700;">📥 Import Robinhood Positions</div>
+      <button onclick="hideImportModal()" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:18px;">✕</button>
+    </div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:12px;">
+      Enter each position on a new line: <code style="color:var(--blue)">SYMBOL, shares, avg_cost</code>
+    </div>
+    <textarea id="importText" placeholder="AAPL, 12, 271.50&#10;NVDA, 5, 890.00&#10;TSLA, 8, 175.25"
+      style="width:100%;height:140px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:monospace;font-size:13px;padding:10px;resize:vertical;outline:none;"></textarea>
+    <div style="display:flex;align-items:center;gap:10px;margin-top:12px;">
+      <label style="font-size:12px;color:var(--muted);white-space:nowrap;">Total Account Value ($):</label>
+      <input type="number" id="importEquity" placeholder="10000" step="0.01"
+        style="flex:1;background:var(--bg3);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px;padding:7px 10px;outline:none;" />
+    </div>
+    <div style="font-size:11px;color:var(--muted);margin-top:6px;">Cash = Total Value − sum of positions. Stop/target set to 5% / 15% by default.</div>
+    <div style="display:flex;gap:8px;margin-top:16px;justify-content:flex-end;">
+      <button class="btn btn-ghost" onclick="hideImportModal()">Cancel</button>
+      <button class="btn btn-green" onclick="submitImport()">✅ Import & Sync</button>
+    </div>
   </div>
 </div>
 
@@ -219,6 +248,22 @@
       <div class="stat-label">Unrealized P&amp;L</div>
       <div class="stat-value" id="unrealizedPnl">—</div>
       <div class="stat-sub" id="pnlSub">—</div>
+    </div>
+  </div>
+
+  <!-- Pending Alerts (shown only when there are alerts) -->
+  <div id="alertsPanel" style="display:none;margin-bottom:16px;">
+    <div class="panel" style="border-color:#d29922;">
+      <div class="panel-header" style="background:#2d2a1f;">
+        <div class="panel-title" style="color:var(--yellow);">📬 Pending Trade Alerts — Action Required</div>
+        <button class="btn btn-ghost" onclick="refreshAlerts()">↻ Refresh</button>
+      </div>
+      <div class="scrollable">
+        <table>
+          <thead><tr><th>Type</th><th>Symbol</th><th>Shares</th><th>Price</th><th>Stop</th><th>Target</th><th>Reason</th><th>Actions</th></tr></thead>
+          <tbody id="alertsBody"></tbody>
+        </table>
+      </div>
     </div>
   </div>
 
@@ -374,6 +419,10 @@ async function refreshAutopilot() {
     $('apTrades').textContent = d.trades_today;
     $('apLastScan').textContent = timeSince(d.last_screen);
     $('apLastCheck').textContent = timeSince(d.last_check);
+
+    // Sync alert mode button
+    _alertMode = d.alert_mode || false;
+    updateAlertModeBtn();
 
     // Sync force mode button
     _forceMode = d.force_mode || false;
@@ -638,9 +687,142 @@ async function removeFromWatchlist(sym) {
 }
 $('watchlistInput').addEventListener('keydown', e => { if(e.key==='Enter') addToWatchlist(); });
 
+// ── Alert Mode ────────────────────────────────────────────────────────────────
+let _alertMode = false;
+async function toggleAlertMode() {
+  _alertMode = !_alertMode;
+  const endpoint = _alertMode ? '/autopilot/alert-mode/enable' : '/autopilot/alert-mode/disable';
+  try {
+    await fetch(`${API}${endpoint}`, {method:'POST'});
+    updateAlertModeBtn();
+    toast(_alertMode
+      ? '📬 Alert Mode ON — you\'ll get emails when the bot wants to trade. Confirm on the dashboard.'
+      : '🤖 Alert Mode OFF — bot will auto-execute trades');
+  } catch(e) { toast('Server offline', true); }
+}
+
+function updateAlertModeBtn() {
+  const btn = $('alertModeBtn');
+  if (!btn) return;
+  if (_alertMode) {
+    btn.textContent = '📬 Alert Mode: ON';
+    btn.style.background = '#1a3a2a';
+    btn.style.color = '#3fb950';
+    btn.style.borderColor = '#3fb950';
+  } else {
+    btn.textContent = '📬 Alert Mode: OFF';
+    btn.style.background = '#1a2a1a';
+    btn.style.color = '#3fb950';
+    btn.style.borderColor = '#2a4a2a';
+  }
+}
+
+// ── Pending Alerts ────────────────────────────────────────────────────────────
+async function refreshAlerts() {
+  try {
+    const r = await fetch(`${API}/alerts`);
+    const d = await r.json();
+    const alerts = d.alerts || [];
+    const panel = $('alertsPanel');
+    const tbody = $('alertsBody');
+    if (!alerts.length) { panel.style.display = 'none'; return; }
+    panel.style.display = 'block';
+    tbody.innerHTML = alerts.map(a => {
+      const isBuy = a.type === 'BUY';
+      const color = isBuy ? 'var(--green)' : 'var(--red)';
+      const emoji = isBuy ? '🟢' : '🔴';
+      return `<tr>
+        <td><span style="color:${color};font-weight:700;">${emoji} ${a.type}</span></td>
+        <td><span class="symbol-badge">${a.symbol}</span></td>
+        <td class="mono">${Number(a.shares).toFixed(2)}</td>
+        <td class="mono">~${fmt$(a.price)}</td>
+        <td class="mono" style="color:var(--red)">${a.stop_loss ? fmt$(a.stop_loss) : '—'}</td>
+        <td class="mono" style="color:var(--green)">${a.take_profit ? fmt$(a.take_profit) : '—'}</td>
+        <td style="font-size:11px;color:var(--muted);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${a.reason}">${a.reason||'—'}</td>
+        <td>
+          <div style="display:flex;gap:6px;">
+            <button class="btn btn-green" style="padding:4px 10px;font-size:11px;" onclick="confirmAlert(${a.id})">✅ Confirm</button>
+            <button class="btn btn-ghost"  style="padding:4px 10px;font-size:11px;" onclick="dismissAlert(${a.id})">✕ Skip</button>
+          </div>
+        </td>
+      </tr>`;
+    }).join('');
+  } catch(e) {}
+}
+
+async function confirmAlert(id) {
+  const price = prompt('Enter the price you executed at (leave blank to use suggested price):');
+  try {
+    const body = price ? {price: parseFloat(price)} : {};
+    const r = await fetch(`${API}/alerts/${id}/confirm`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+    const d = await r.json();
+    if (d.ok) {
+      toast('✅ Trade confirmed and synced to portfolio!');
+      refreshAlerts();
+      refreshPortfolio();
+      refreshHistory();
+    } else {
+      toast(d.error || 'Could not confirm', true);
+    }
+  } catch(e) { toast('Server offline', true); }
+}
+
+async function dismissAlert(id) {
+  try {
+    await fetch(`${API}/alerts/${id}/dismiss`, {method:'POST'});
+    toast('Alert dismissed');
+    refreshAlerts();
+  } catch(e) {}
+}
+
+// ── Import Positions ──────────────────────────────────────────────────────────
+function showImportModal() {
+  const m = $('importModal');
+  m.style.display = 'flex';
+}
+function hideImportModal() {
+  $('importModal').style.display = 'none';
+}
+
+async function submitImport() {
+  const text = $('importText').value.trim();
+  const equity = parseFloat($('importEquity').value);
+  if (!text) { toast('Enter at least one position', true); return; }
+  if (!equity || equity <= 0) { toast('Enter your total account value', true); return; }
+
+  const positions = [];
+  for (const line of text.split('\n')) {
+    const parts = line.split(/[\s,]+/).filter(Boolean);
+    if (parts.length < 3) continue;
+    const symbol = parts[0].toUpperCase();
+    const shares = parseFloat(parts[1]);
+    const avg_cost = parseFloat(parts[2]);
+    if (!symbol || isNaN(shares) || isNaN(avg_cost)) continue;
+    positions.push({symbol, shares, avg_cost});
+  }
+
+  if (!positions.length) { toast('Could not parse any positions. Format: SYMBOL, shares, price', true); return; }
+
+  try {
+    const r = await fetch(`${API}/portfolio/import`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({positions, total_equity: equity})
+    });
+    const d = await r.json();
+    if (d.ok) {
+      toast(`✅ Imported ${positions.length} positions! Cash set to ${fmt$(d.cash)}`);
+      hideImportModal();
+      refreshPortfolio();
+    } else {
+      toast('Import failed', true);
+    }
+  } catch(e) { toast('Server offline', true); }
+}
+
 // ── Init & refresh loops ──────────────────────────────────────────────────────
 async function refreshAll() {
-  await Promise.all([refreshPortfolio(), refreshHistory(), refreshLogs(), refreshWatchlist(), refreshAutopilot()]);
+  await Promise.all([refreshPortfolio(), refreshHistory(), refreshLogs(), refreshWatchlist(), refreshAutopilot(), refreshAlerts()]);
 }
 
 refreshAll();
@@ -649,6 +831,7 @@ setInterval(refreshAutopilot, 15000);
 setInterval(refreshLogs, 8000);
 setInterval(refreshHistory, 60000);
 setInterval(refreshWatchlist, 120000);
+setInterval(refreshAlerts, 20000);
 </script>
 </body>
 </html>

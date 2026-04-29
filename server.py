@@ -200,6 +200,7 @@ def get_autopilot():
     return {
         "enabled": auto_trader.state["enabled"],
         "force_mode": auto_trader.state["force_mode"],
+        "alert_mode": auto_trader.state["alert_mode"],
         "market_open": auto_trader.is_market_open(),
         "last_screen": auto_trader.state["last_screen"],
         "last_check": auto_trader.state["last_check"],
@@ -237,6 +238,19 @@ def get_autopilot_logs(limit: int = 30):
     return {"logs": auto_trader.state["log"][:limit]}
 
 
+@app.post("/autopilot/alert-mode/enable")
+def enable_alert_mode():
+    auto_trader.state["alert_mode"] = True
+    auto_trader._log("📬 Alert mode ENABLED — bot will email alerts instead of auto-trading")
+    return {"alert_mode": True, "message": "Alert mode ON — you will receive emails when the bot wants to trade"}
+
+@app.post("/autopilot/alert-mode/disable")
+def disable_alert_mode():
+    auto_trader.state["alert_mode"] = False
+    auto_trader._log("🤖 Alert mode DISABLED — bot will auto-execute trades")
+    return {"alert_mode": False, "message": "Alert mode OFF — bot will trade automatically"}
+
+
 @app.post("/autopilot/force-mode/enable")
 def enable_force_mode():
     auto_trader.state["force_mode"] = True
@@ -261,6 +275,39 @@ async def force_check(background_tasks: BackgroundTasks):
     """Force an immediate position check."""
     background_tasks.add_task(auto_trader.run_position_check)
     return {"message": "Immediate position check triggered"}
+
+
+@app.get("/alerts")
+def get_alerts():
+    return {"alerts": portfolio.get_alerts("pending")}
+
+@app.post("/alerts/{alert_id}/confirm")
+async def confirm_alert(alert_id: int, request: Request):
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    confirmed_price = body.get("price")
+    result = portfolio.confirm_alert(alert_id, confirmed_price)
+    return result
+
+@app.post("/alerts/{alert_id}/dismiss")
+def dismiss_alert(alert_id: int):
+    portfolio.dismiss_alert(alert_id)
+    return {"ok": True}
+
+@app.post("/portfolio/import")
+async def import_positions(request: Request):
+    """Import real positions from Robinhood to sync the paper portfolio."""
+    body = await request.json()
+    positions = body.get("positions", [])
+    total_equity = body.get("total_equity", 0)
+    if not positions:
+        raise HTTPException(status_code=400, detail="No positions provided")
+    result = portfolio.import_positions(positions, total_equity)
+    log_event({"type": "portfolio_imported", "positions": len(positions), "equity": total_equity})
+    return {"ok": True, **result}
 
 
 @app.get("/portfolio")

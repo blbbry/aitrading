@@ -59,6 +59,25 @@ def init_db(starting_cash: float = 100_000.0):
             con.execute("ALTER TABLE position_meta ADD COLUMN entry_rsi REAL")
         if "partial_taken" not in existing_meta_cols:
             con.execute("ALTER TABLE position_meta ADD COLUMN partial_taken INTEGER DEFAULT 0")
+
+        # Alerts table — for alert mode (manual execution workflow)
+        con.executescript("""
+            CREATE TABLE IF NOT EXISTS trade_alerts (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts            TEXT    NOT NULL,
+                type          TEXT    NOT NULL,
+                symbol        TEXT    NOT NULL,
+                shares        REAL    NOT NULL,
+                price         REAL    NOT NULL,
+                stop_loss     REAL,
+                take_profit   REAL,
+                reason        TEXT,
+                score         INTEGER,
+                status        TEXT    NOT NULL DEFAULT 'pending',
+                confirmed_at  TEXT,
+                confirmed_price REAL
+            );
+        """)
         existing_trade_cols = {
             r[1] for r in con.execute("PRAGMA table_info(trades)").fetchall()
         }
@@ -126,6 +145,89 @@ def set_partial_taken(symbol: str):
         con.execute(
             "UPDATE position_meta SET partial_taken=1 WHERE symbol=?", (symbol,)
         )
+
+
+def import_positions(positions: list, total_equity: float):
+    """
+    Replace the entire portfolio with imported positions.
+    positions: [{"symbol": "AAPL", "shares": 12, "avg_cost": 271.50}, ...]
+    cash = total_equity - sum(shares * avg_cost)
+    """
+    invested = sum(p["shares"] * p["avg_cost"] for p in positions)
+    cash = max(0, total_equity - invested)
+    with _conn() as con:
+        con.execute("DELETE FROM positions")
+        con.execute("DELETE FROM position_meta")
+        con.execute("UPDATE portfolio SET cash=? WHERE id=1", (cash,))
+        for p in positions:
+            con.execute(
+                "INSERT INTO positions (symbol, shares, avg_cost) VALUES (?,?,?)",
+                (p["symbol"], p["shares"], p["avg_cost"])
+            )
+            # Default stop/target: 5% below / 15% above avg cost
+            stop   = round(p["avg_cost"] * 0.95, 2)
+            target = round(p["avg_cost"] * 1.15, 2)
+            con.execute("""
+                INSERT INTO position_meta (symbol, stop_loss, take_profit, entry_date, entry_reason)
+                VALUES (?, ?, ?, ?, 'Imported from Robinhood')
+            """, (p["symbol"], stop, target, datetime.utcnow().isoformat()))
+    return {"cash": round(cash, 2), "positions": len(positions)}
+
+
+# ── Alert helpers ─────────────────────────────────────────────────────────────
+
+def create_alert(type: str, symbol: str, shares: float, price: float,
+                 stop_loss: float = None, take_profit: float = None,
+                 reason: str = "", score: int = None) -> int:
+    with _conn() as con:
+        cur = con.execute("""
+            INSERT INTO trade_alerts (ts, type, symbol, shares, price, stop_loss, take_profit, reason, score)
+            VALUES (?,?,?,?,?,?,?,?,?)
+        """, (datetime.utcnow().isoformat(), type, symbol, shares, price,
+              stop_loss, take_profit, reason, score))
+        return cur.lastrowid
+
+
+def get_alerts(status: str = "pending") -> list:
+    with _conn() as con:
+        rows = con.execute(
+            "SELECT * FROM trade_alerts WHERE status=? ORDER BY id DESC", (status,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def confirm_alert(alert_id: int, confirmed_price: float = None) -> dict:
+    """Execute the trade in the paper portfolio and mark alert confirmed."""
+    with _conn() as con:
+        row = con.execute("SELECT * FROM trade_alerts WHERE id=?", (alert_id,)).fetchone()
+    if not row:
+        return {"ok": False, "error": "Alert not found"}
+    alert = dict(row)
+    if alert["status"] != "pending":
+        return {"ok": False, "error": f"Alert already {alert['status']}"}
+
+    exec_price = confirmed_price or alert["price"]
+    if alert["type"] == "BUY":
+        result = buy(alert["symbol"], alert["shares"], exec_price,
+                     reason=f"Confirmed: {alert['reason']}",
+                     stop_loss=alert["stop_loss"], take_profit=alert["take_profit"],
+                     swing_score=alert["score"])
+    else:
+        result = sell(alert["symbol"], alert["shares"], exec_price,
+                      reason=f"Confirmed: {alert['reason']}")
+
+    if result.get("ok"):
+        with _conn() as con:
+            con.execute(
+                "UPDATE trade_alerts SET status='confirmed', confirmed_at=?, confirmed_price=? WHERE id=?",
+                (datetime.utcnow().isoformat(), exec_price, alert_id)
+            )
+    return result
+
+
+def dismiss_alert(alert_id: int):
+    with _conn() as con:
+        con.execute("UPDATE trade_alerts SET status='dismissed' WHERE id=?", (alert_id,))
 
 
 def raise_stop_to_breakeven(symbol: str, avg_cost: float):

@@ -48,6 +48,7 @@ COOLDOWN_HOURS = 2    # hours to wait before re-buying a recently sold stock
 state = {
     "enabled": False,
     "force_mode": False,   # bypass market hours check for testing
+    "alert_mode": False,   # send email alerts instead of auto-executing trades
     "last_screen": None,
     "last_check": None,
     "trades_today": 0,
@@ -61,6 +62,56 @@ def _log(msg: str, level: str = "info"):
     state["log"].insert(0, entry)
     state["log"] = state["log"][:100]
     getattr(log, level)(msg)
+
+
+def _send_trade_alert(type: str, symbol: str, shares: float, price: float,
+                      stop: float, target: float, reason: str, score: int):
+    """Send an email alert for a trade that needs manual execution."""
+    try:
+        import smtplib
+        from email.mime.text import MIMEText
+        from email.mime.multipart import MIMEMultipart
+        gmail_user = os.environ.get("GMAIL_USER", "")
+        gmail_pass = os.environ.get("GMAIL_APP_PASS", "")
+        if not gmail_user or not gmail_pass:
+            return
+
+        emoji = "🟢" if type == "BUY" else "🔴"
+        subject = f"{emoji} {type} ALERT — {symbol} | AI Swing Trader"
+
+        lines = [
+            f"{emoji} {type} ALERT — {symbol}",
+            "─" * 40,
+            f"Action:      {type}",
+            f"Shares:      {shares:.2f}",
+            f"Price:       ~${price:.2f}",
+        ]
+        if stop:   lines.append(f"Stop Loss:   ${stop:.2f}")
+        if target: lines.append(f"Take Profit: ${target:.2f}")
+        if score:  lines.append(f"Score:       {score}/100")
+        lines += [
+            f"Reason:      {reason}",
+            "",
+            "→ Execute this trade on Robinhood, then confirm at:",
+            "  https://aitrading.fly.dev",
+            "",
+            "─" * 40,
+            "AI Swing Trader | https://aitrading.fly.dev",
+        ]
+        body = "\n".join(lines)
+
+        msg = MIMEMultipart()
+        msg["From"]    = f"AI Swing Trader <{gmail_user}>"
+        msg["To"]      = gmail_user   # send to yourself
+        msg["Subject"] = subject
+        msg.attach(MIMEText(body, "plain"))
+
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
+            smtp.login(gmail_user, gmail_pass)
+            smtp.sendmail(gmail_user, gmail_user, msg.as_string())
+        _log(f"  📧 Alert email sent for {type} {symbol}")
+    except Exception as e:
+        _log(f"  ⚠️  Alert email failed: {e}", "warning")
 
 
 def is_market_open() -> bool:
@@ -220,22 +271,32 @@ def run_buy_scan():
         top_signals      = [s["signal"] for s in setup.get("signals", []) if s["bullish"]][:2]
         reason = f"Auto-buy: score={setup['score']} RSI={setup.get('rsi','?'):.0f} signals={','.join(top_signals)}"
 
-        result = portfolio.buy(
-            symbol, shares, price,
-            reason=reason,
-            stop_loss=stop_loss,
-            take_profit=take_profit,
-            swing_score=setup["score"],
-            entry_signals=all_signal_names,
-            entry_rsi=setup.get("rsi"),
-        )
-
-        if result.get("ok"):
+        if state["alert_mode"]:
+            # Alert mode — notify user instead of auto-executing
+            alert_id = portfolio.create_alert(
+                "BUY", symbol, shares, price,
+                stop_loss=stop_loss, take_profit=take_profit,
+                reason=reason, score=setup["score"]
+            )
+            _send_trade_alert("BUY", symbol, shares, price, stop_loss, take_profit, reason, setup["score"])
             bought += 1
-            state["trades_today"] += 1
-            _log(f"  ✅ BOUGHT {shares:.2f}x {symbol} @ ${price:.2f} | stop=${stop_loss} target=${take_profit} | score={setup['score']}")
+            _log(f"  📬 ALERT sent: BUY {shares:.2f}x {symbol} @ ~${price:.2f} | alert_id={alert_id}")
         else:
-            _log(f"  ❌ Buy failed {symbol}: {result.get('error')}", "warning")
+            result = portfolio.buy(
+                symbol, shares, price,
+                reason=reason,
+                stop_loss=stop_loss,
+                take_profit=take_profit,
+                swing_score=setup["score"],
+                entry_signals=all_signal_names,
+                entry_rsi=setup.get("rsi"),
+            )
+            if result.get("ok"):
+                bought += 1
+                state["trades_today"] += 1
+                _log(f"  ✅ BOUGHT {shares:.2f}x {symbol} @ ${price:.2f} | stop=${stop_loss} target=${take_profit} | score={setup['score']}")
+            else:
+                _log(f"  ❌ Buy failed {symbol}: {result.get('error')}", "warning")
 
     state["last_screen"] = datetime.utcnow().isoformat()
     _log(f"🔭 Scan complete — {bought} new position(s) opened")
@@ -331,6 +392,15 @@ def run_position_check():
                 entry_signals     = json.loads(entry_signals_raw) if entry_signals_raw else []
                 entry_rsi         = meta.get("entry_rsi")
                 entry_date_str    = meta.get("entry_date")
+
+                if state["alert_mode"]:
+                    alert_id = portfolio.create_alert(
+                        "SELL", symbol, shares, price,
+                        reason=f"Auto-sell: {reason}"
+                    )
+                    _send_trade_alert("SELL", symbol, shares, price, None, None, reason, None)
+                    _log(f"  📬 ALERT sent: SELL {shares:.2f}x {symbol} @ ~${price:.2f} | {reason} | alert_id={alert_id}")
+                    continue
 
                 result = portfolio.sell(symbol, shares, price, reason=f"Auto-sell: {reason}")
                 if result.get("ok"):
