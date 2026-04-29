@@ -57,6 +57,8 @@ def init_db(starting_cash: float = 100_000.0):
             con.execute("ALTER TABLE position_meta ADD COLUMN entry_signals TEXT")
         if "entry_rsi" not in existing_meta_cols:
             con.execute("ALTER TABLE position_meta ADD COLUMN entry_rsi REAL")
+        if "partial_taken" not in existing_meta_cols:
+            con.execute("ALTER TABLE position_meta ADD COLUMN partial_taken INTEGER DEFAULT 0")
         existing_trade_cols = {
             r[1] for r in con.execute("PRAGMA table_info(trades)").fetchall()
         }
@@ -116,6 +118,23 @@ def set_position_meta(symbol: str, stop_loss: float, take_profit: float,
 def clear_position_meta(symbol: str):
     with _conn() as con:
         con.execute("DELETE FROM position_meta WHERE symbol=?", (symbol,))
+
+
+def set_partial_taken(symbol: str):
+    """Mark that a partial profit exit has been taken for this position."""
+    with _conn() as con:
+        con.execute(
+            "UPDATE position_meta SET partial_taken=1 WHERE symbol=?", (symbol,)
+        )
+
+
+def raise_stop_to_breakeven(symbol: str, avg_cost: float):
+    """Raise the stop-loss to breakeven (avg cost) after a partial exit."""
+    with _conn() as con:
+        con.execute(
+            "UPDATE position_meta SET stop_loss=MAX(stop_loss, ?) WHERE symbol=?",
+            (round(avg_cost, 2), symbol)
+        )
 
 
 def buy(symbol: str, shares: float, price: float, reason: str = "",

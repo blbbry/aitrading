@@ -38,6 +38,7 @@ MAX_RSI_BUY         = 65      # don't buy if RSI above this (overbought)
 MAX_HOLD_DAYS       = 15      # force-exit after this many days
 SELL_RSI_OVERBOUGHT = 75      # take profit if RSI spikes here
 SELL_SCORE_FLOOR    = 35      # exit if swing score collapses below this
+PARTIAL_PROFIT_AT   = 0.50   # sell half the position when 50% of the way to take-profit
 SCREEN_INTERVAL_MIN = 30      # screen watchlist every N minutes
 CHECK_INTERVAL_MIN  = 5       # check stop/target every N minutes
 
@@ -368,6 +369,28 @@ def run_position_check():
                 stop = meta.get("stop_loss", "?")
                 target = meta.get("take_profit", "?")
                 _log(f"  ✅ HOLD {symbol} @ ${price:.2f} ({pnl_pct:+.1f}%) | stop=${stop} target=${target}")
+
+                # ── Partial profit-taking ──────────────────────────────────
+                # If price is 50%+ of the way to target, sell half and raise stop to breakeven
+                take_profit = meta.get("take_profit")
+                partial_taken = meta.get("partial_taken", 0)
+                if take_profit and not partial_taken and avg_cost:
+                    halfway = avg_cost + PARTIAL_PROFIT_AT * (take_profit - avg_cost)
+                    if price >= halfway:
+                        half_shares = round(pos["shares"] / 2, 2)
+                        if half_shares >= 0.01:
+                            partial_result = portfolio.sell(
+                                symbol, half_shares, price,
+                                reason=f"Partial profit: price ${price:.2f} passed {PARTIAL_PROFIT_AT:.0%} of target ${take_profit}"
+                            )
+                            if partial_result.get("ok"):
+                                pnl = partial_result.get("pnl", 0)
+                                state["trades_today"] += 1
+                                portfolio.set_partial_taken(symbol)
+                                # Raise stop to breakeven so the remaining half can't lose
+                                portfolio.raise_stop_to_breakeven(symbol, avg_cost)
+                                _log(f"  🟡 PARTIAL SELL {half_shares:.2f}x {symbol} @ ${price:.2f} "
+                                     f"| P&L: ${pnl:+.2f} | stop raised to breakeven ${avg_cost:.2f}")
 
         except Exception as e:
             _log(f"  ❌ Error checking {symbol}: {e}", "error")
